@@ -1,5 +1,5 @@
 import pymc3 as pm
-
+import numpy as np
 import theano.tensor as tt
 
 def rwfmm(functional_data,static_data,Y,tune=2000,draws = 1000,chains=2,
@@ -9,7 +9,8 @@ def rwfmm(functional_data,static_data,Y,tune=2000,draws = 1000,chains=2,
         level_scale = 1.0):
     '''
     Fits a functional mixed model with a random-walk model of
-    the functional coefficient.
+    the functional coefficient. A range of different priors is available for
+    the model coefficients.
 
     Parameters
     ----------
@@ -78,11 +79,6 @@ def rwfmm(functional_data,static_data,Y,tune=2000,draws = 1000,chains=2,
         fitting.
     model: pymc3 Model
         The model object describing the RWFMM.
-
-
-
-    Notes
-    -----
     '''
 
     with pm.Model() as model:
@@ -102,29 +98,42 @@ def rwfmm(functional_data,static_data,Y,tune=2000,draws = 1000,chains=2,
             coef = pm.Flat('coef',shape = n_covariates)
 
         elif coefficient_prior is 'normal':
-            coef_level_sd = pm.HalfCauchy('static_coef_sd',beta = 1.0)
-            coef          = pm.Normal('static_coef',sd = coef_level_sd,shape = n_covariates )
+            coef_sd = pm.HalfCauchy('coef_sd',beta = 1.0)
+            coef    = pm.Normal('coef',sd = coef_sd,shape = n_covariates )
 
         elif coefficient_prior is 'cauchy':
-            coef_level_sd = pm.HalfCauchy('static_coef_sd',beta = 1.0)
-            coef          = pm.Cauchy('static_coef',beta = coef_level_sd,shape = n_covariates )
+            coef_sd = pm.HalfCauchy('coef_sd',beta = 1.0)
+            coef    = pm.Cauchy('coef',beta = coef_sd,shape = n_covariates )
 
         elif coefficient_prior is 'horseshoe':
             loc_shrink = pm.HalfCauchy('loc_shrink_level',beta = 1,shape = n_covariates)
             glob_shrink= pm.HalfCauchy('glob_shrink_level',beta = 1)
-            coef = pm.Normal('static_coef',sd = (loc_shrink_static * glob_shrink_static))
+            coef = pm.Normal('coef',sd = (loc_shrink * glob_shrink),shape = n_covariates)
 
+        # Implemented per Piironnen and Vehtari '18
         elif coefficient_prior is 'finnish_horseshoe':
-            '''nu_c = pm.Gamma(alpha = 2.0, beta = 0.1)
-            c_squared = pm.InverseGamma(alpha = nu_c/2,)'''
-            raise NotImplementedError
+
+            loc_shrink  = pm.HalfCauchy('loc_shrink_level',beta = 1,shape = n_covariates)
+            glob_shrink = pm.HalfCauchy('glob_shrink_level',beta = 1)
+
+            # In order to get some of the values within the prior calculations,
+            # we need to know the variance of the predictors.
+            static_var = np.var(static_data,axis = (0,1))
+            func_var   = np.var(functional_data,axis = (0,1,2))
+            variances  = np.concatenate([static_var,func_var])
+
+            nu_c = pm.Gamma('nu_c',alpha = 2.0, beta = 0.1)
+            c    = pm.InverseGamma('c',alpha = nu_c/2, beta = nu_c * variances / 2,shape = n_covariates)
+
+            regularized_loc_shrink = c * loc_shrink**2 / (c + glob_shrink**2 * loc_shrink**2)
+
+            coef = pm.Normal('coef',sd = (regularized_loc_shrink * glob_shrink**2)**0.5,shape = n_covariates)
 
         # Setting scalarize to True makes this into a vanilla linear mixed model.
         if scalarize:
             func_contrib = tt.tensordot(tt.mean(functional_data,axis=2),level,axes=[[2],[0]])
 
         else:
-
             if func_coef_sd == 'prior':
                 func_coef_sd = pm.HalfNormal('func_coef_sd',sd = func_coef_sd_hypersd,shape=F)
 
