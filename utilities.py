@@ -59,7 +59,7 @@ def mutiple_coef_plot(samples,num_horizontal,num_vertical,titles,upper = 97.5,lo
         axes[i].set_title(titles[i])
     plt.tight_layout()
 
-    return fig,axes
+    return figure,axes
 
 
 
@@ -122,7 +122,7 @@ class FuncDataset(object):
         self.response = self.response_from_static + self.response_from_func + self.noise
 
 
-def get_data(response_col,functional_covariates,static_covariates,log_transform_response = False,T=336):
+def get_data(response_col,functional_covariates,static_covariates,log_transform_response = False,T=336,standardize_inputs = False):
     df = pd.read_pickle('/home/ubuntu/Dropbox/wfmm/intermediate/no_wavelet_dataframe_5_6.p')
     P = df.id.unique().shape[0]
     V = df.visit.unique().shape[0]
@@ -190,4 +190,9 @@ def get_data(response_col,functional_covariates,static_covariates,log_transform_
     assert np.all(np.isfinite(D_static))
     assert np.all(np.isfinite(D_func))
     print '{0} patient/visit pairs have valid observations.'.format(np.sum(is_valid))
+
+    if standardize_inputs:
+        D_func   = (D_func - np.mean(D_func,axis = (0,1,2))) / np.std(D_func,axis = (0,1,2))
+        D_static = (D_static - np.mean(D_static,axis = (0,1))) / np.std(D_static,axis = (0,1))
+        
     return D_func,D_static,Y
