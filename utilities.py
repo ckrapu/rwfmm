@@ -41,7 +41,7 @@ def coef_plot(samples,upper = 97.5,lower = 2.5):
     plt.ylabel('B(t)')
     plt.grid('on')
 
-def mutiple_coef_plot(samples,num_horizontal,num_vertical,titles,upper = 97.5,lower = 2.5,fig_kwargs = {'figsize':(8,6),'sharex':True},
+def multiple_coef_plot(samples,num_horizontal,num_vertical,titles,upper = 97.5,lower = 2.5,fig_kwargs = {'figsize':(8,6),'sharex':True},
                      xlabel='Timestep',ylabel='B(t)'):
     _,T,F = samples.shape
     figure,axes = plt.subplots(num_vertical,num_horizontal,**fig_kwargs)
@@ -194,5 +194,5 @@ def get_data(response_col,functional_covariates,static_covariates,log_transform_
     if standardize_inputs:
         D_func   = (D_func - np.mean(D_func,axis = (0,1,2))) / np.std(D_func,axis = (0,1,2))
         D_static = (D_static - np.mean(D_static,axis = (0,1))) / np.std(D_static,axis = (0,1))
-        
+
     return D_func,D_static,Y
