@@ -3,9 +3,9 @@ import pymc3 as pm
 import theano.tensor as tt
 
 def rwfmm(functional_data,static_data,Y,tune=2000,draws = 1000,chains=2,
-        func_coef_sd = 1e-2,method='nuts',n_iter_approx=30000,
+        func_coef_sd = 'prior',method='nuts',n_iter_approx=30000,
         scalarize=False,robust=False,func_coef_sd_hypersd = 0.05,
-        coefficient_prior='flat',include_fixed_effect = True,
+        coefficient_prior='flat',include_random_effect = True,
         level_scale = 1.0):
     '''
     Fits a functional mixed model with a random-walk model of
@@ -62,8 +62,8 @@ def rwfmm(functional_data,static_data,Y,tune=2000,draws = 1000,chains=2,
         Determines the prior placed on the static covariate coefficients as
         well as the mean (a.k.a. the level) of the functional coefficient.
         The options are "flat","normal","horseshoe","finnish_horseshoe".
-    include_fixed_effect: bool
-        Determines whether or not a per-subject fixed effect is included.
+    include_random_effect: bool
+        Determines whether or not a per-subject random intercept is included.
     level_scale: float
         The order of magnitude of the mean of the functional coefficient.
         This will usually not need to be adjuste unless there is a major
@@ -89,37 +89,34 @@ def rwfmm(functional_data,static_data,Y,tune=2000,draws = 1000,chains=2,
         S,V,T,F = functional_data.shape
         _,_,C   = static_data.shape
 
-        if include_fixed_effect:
-            fixed_effect_mean = pm.Flat('fixed_effect_mean')
-            fixed_effect_sd   = pm.HalfCauchy('fixed_effect_sd',beta = 1.0)
-            fixed_effect      = pm.Normal('fixed_effect',mu = fixed_effect_mean,sd = fixed_effect_sd,shape = [S,1])
+        n_covariates = F + C
+
+        if include_random_effect:
+            random_effect_mean = pm.Flat('random_effect_mean')
+            random_effect_sd   = pm.HalfCauchy('random_effect_sd',beta = 1.0)
+            random_effect      = pm.Normal('random_effect',mu = random_effect_mean,sd = random_effect_sd,shape = [S,1])
         else:
-            fixed_effect  = 0.0
+            random_effect  = 0.0
 
         if coefficient_prior is 'flat':
-            level = pm.Flat('level',shape = F)
-            static_coef = pm.Flat('static_coef',shape = C)
+            coef = pm.Flat('coef',shape = n_covariates)
 
         elif coefficient_prior is 'normal':
-            coef_level_sd =  pm.HalfCauchy('static_coef_sd',beta = 1.0)
-            level         = pm.Normal('level',sd = coef_level_sd,shape = F)
-            static_coef   = pm.Normal('static_coef',sd = coef_level_sd,shape = C)
+            coef_level_sd = pm.HalfCauchy('static_coef_sd',beta = 1.0)
+            coef          = pm.Normal('static_coef',sd = coef_level_sd,shape = n_covariates )
 
         elif coefficient_prior is 'cauchy':
-            coef_level_sd =  pm.HalfCauchy('static_coef_sd',beta = 1.0)
-            level         = pm.Cauchy('level',beta = coef_level_sd,shape = F)
-            static_coef   = pm.Cauchy('static_coef',beta = coef_level_sd,shape = C)
+            coef_level_sd = pm.HalfCauchy('static_coef_sd',beta = 1.0)
+            coef          = pm.Cauchy('static_coef',beta = coef_level_sd,shape = n_covariates )
 
         elif coefficient_prior is 'horseshoe':
-            loc_shrink_level = pm.HalfCauchy('loc_shrink_level',beta = 1,shape = F)
-            glob_shrink_level = pm.HalfCauchy('glob_shrink_level',beta = 1)
-            level = pm.Normal('level',sd = (glob_shrink_level * loc_shrink_level),shape = F)
-
-            loc_shrink_static = pm.HalfCauchy('loc_shrink_static',beta = 1,shape = C)
-            glob_shrink_static = pm.HalfCauchy('glob_shrink_static',beta = 1)
-            static_coef = pm.Normal('static_coef',sd = (loc_shrink_static * glob_shrink_static),shape = C)
+            loc_shrink = pm.HalfCauchy('loc_shrink_level',beta = 1,shape = n_covariates)
+            glob_shrink= pm.HalfCauchy('glob_shrink_level',beta = 1)
+            coef = pm.Normal('static_coef',sd = (loc_shrink_static * glob_shrink_static))
 
         elif coefficient_prior is 'finnish_horseshoe':
+            '''nu_c = pm.Gamma(alpha = 2.0, beta = 0.1)
+            c_squared = pm.InverseGamma(alpha = nu_c/2,)'''
             raise NotImplementedError
 
         # Setting scalarize to True makes this into a vanilla linear mixed model.
@@ -134,17 +131,17 @@ def rwfmm(functional_data,static_data,Y,tune=2000,draws = 1000,chains=2,
             # The 'jumps' are the small deviations about the mean of the functional
             # coefficient, which is defined as 'level'.
             jumps        = pm.Normal('jumps',sd = func_coef_sd,shape=(T,F))
-            random_walks = tt.cumsum(jumps,axis=0)+level
+            random_walks = tt.cumsum(jumps,axis=0) + coef[C:]
 
             func_coef = pm.Deterministic('func_coef',random_walks)
             func_contrib = tt.tensordot(functional_data,func_coef,axes=[[2,3],[0,1]])/T
 
         # The part of the response that comes from the static covariates
-        static_contrib = tt.tensordot(static_data,static_coef,axes = [2,0])
+        static_contrib = tt.tensordot(static_data,coef[0:C],axes = [2,0])
 
         noise_sd = pm.HalfCauchy('noise_sd',beta = 1.0)
 
-        y_hat = pm.Deterministic('y_hat', static_contrib + func_contrib + fixed_effect)
+        y_hat = pm.Deterministic('y_hat', static_contrib + func_contrib + random_effect)
 
         # If the robust error option is used, then a gamma-Student-T distribution
         # is placed on the residuals.
