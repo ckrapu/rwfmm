@@ -85,6 +85,12 @@ def rwfmm(functional_data,static_data,Y,tune=2000,draws = 1000,chains=2,
         S,V,T,F = functional_data.shape
         _,_,C   = static_data.shape
 
+        # We want to make sure the two data arrays agree in the number of
+        # subjects (S) and visits (V).
+        assert static_data.shape[0:2] == functional_data.shape[0:2]
+
+        # Total number of functional and static coefficients.
+        # This does not include the random-walk jumps.
         n_covariates = F + C
 
         if include_random_effect:
@@ -94,26 +100,26 @@ def rwfmm(functional_data,static_data,Y,tune=2000,draws = 1000,chains=2,
         else:
             random_effect  = 0.0
 
-        if coefficient_prior is 'flat':
+        if coefficient_prior == 'flat':
             coef = pm.Flat('coef',shape = n_covariates)
 
-        elif coefficient_prior is 'normal':
+        elif coefficient_prior == 'normal':
             coef_sd = pm.HalfCauchy('coef_sd',beta = 1.0)
-            coef    = pm.Normal('coef',sd = coef_sd,shape = n_covariates )
+            coef    = pm.Normal('coef',sd = coef_sd,shape = [n_covariates] )
 
-        elif coefficient_prior is 'cauchy':
+        elif coefficient_prior == 'cauchy':
             coef_sd = pm.HalfCauchy('coef_sd',beta = 1.0)
-            coef    = pm.Cauchy('coef',beta = coef_sd,shape = n_covariates )
+            coef    = pm.Cauchy('coef',alpha = 0.0, beta = coef_sd,shape = [n_covariates] )
 
-        elif coefficient_prior is 'horseshoe':
-            loc_shrink = pm.HalfCauchy('loc_shrink_level',beta = 1,shape = n_covariates)
+        elif coefficient_prior == 'horseshoe':
+            loc_shrink = pm.HalfCauchy('loc_shrink_level',beta = 1,shape = [n_covariates])
             glob_shrink= pm.HalfCauchy('glob_shrink_level',beta = 1)
-            coef = pm.Normal('coef',sd = (loc_shrink * glob_shrink),shape = n_covariates)
+            coef = pm.Normal('coef',sd = (loc_shrink * glob_shrink),shape = [n_covariates])
 
         # Implemented per Piironnen and Vehtari '18
-        elif coefficient_prior is 'finnish_horseshoe':
+        elif coefficient_prior == 'finnish_horseshoe':
 
-            loc_shrink  = pm.HalfCauchy('loc_shrink_level',beta = 1,shape = n_covariates)
+            loc_shrink  = pm.HalfCauchy('loc_shrink_level',beta = 1,shape = [n_covariates])
             glob_shrink = pm.HalfCauchy('glob_shrink_level',beta = 1)
 
             # In order to get some of the values within the prior calculations,
@@ -123,11 +129,11 @@ def rwfmm(functional_data,static_data,Y,tune=2000,draws = 1000,chains=2,
             variances  = np.concatenate([static_var,func_var])
 
             nu_c = pm.Gamma('nu_c',alpha = 2.0, beta = 0.1)
-            c    = pm.InverseGamma('c',alpha = nu_c/2, beta = nu_c * variances / 2,shape = n_covariates)
+            c    = pm.InverseGamma('c',alpha = nu_c/2, beta = nu_c * variances / 2,shape = [n_covariates])
 
             regularized_loc_shrink = c * loc_shrink**2 / (c + glob_shrink**2 * loc_shrink**2)
 
-            coef = pm.Normal('coef',sd = (regularized_loc_shrink * glob_shrink**2)**0.5,shape = n_covariates)
+            coef = pm.Normal('coef',sd = (regularized_loc_shrink * glob_shrink**2)**0.5,shape = [n_covariates])
 
         # Setting scalarize to True makes this into a vanilla linear mixed model.
         if scalarize:
@@ -143,13 +149,17 @@ def rwfmm(functional_data,static_data,Y,tune=2000,draws = 1000,chains=2,
             random_walks = tt.cumsum(jumps,axis=0) + coef[C:]
 
             func_coef = pm.Deterministic('func_coef',random_walks)
+
+            # This is the additive term in y_hat that comes from the functional
+            # part of the model.
             func_contrib = tt.tensordot(functional_data,func_coef,axes=[[2,3],[0,1]])/T
 
-        # The part of the response that comes from the static covariates
+        # The part of y_hat that comes from the static covariates
         static_contrib = tt.tensordot(static_data,coef[0:C],axes = [2,0])
 
         noise_sd = pm.HalfCauchy('noise_sd',beta = 1.0)
 
+        # y_hat is the predictive mean.
         y_hat = pm.Deterministic('y_hat', static_contrib + func_contrib + random_effect)
 
         # If the robust error option is used, then a gamma-Student-T distribution
