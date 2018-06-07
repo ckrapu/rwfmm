@@ -96,7 +96,8 @@ def rwfmm(functional_data,static_data,Y,tune=2000,draws = 1000,chains=2,
         if include_random_effect:
             random_effect_mean = pm.Flat('random_effect_mean')
             random_effect_sd   = pm.HalfCauchy('random_effect_sd',beta = 1.0)
-            random_effect      = pm.Normal('random_effect',mu = random_effect_mean,sd = random_effect_sd,shape = [S,1])
+            random_effect_unscaled = pm.Normal('random_effect_unscaled',shape = [S,1])
+            random_effect      = random_effect_unscaled * random_effect_sd + random_effect_mean
         else:
             random_effect  = 0.0
 
