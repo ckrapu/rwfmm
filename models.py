@@ -113,15 +113,15 @@ def rwfmm(functional_data,static_data,Y,tune=2000,draws = 1000,chains=2,
             coef    = pm.Cauchy('coef',alpha = 0.0, beta = coef_sd,shape = [n_covariates] )
 
         elif coefficient_prior == 'horseshoe':
-            loc_shrink = pm.HalfCauchy('loc_shrink_level',beta = 1,shape = [n_covariates])
-            glob_shrink= pm.HalfCauchy('glob_shrink_level',beta = 1)
+            loc_shrink = pm.HalfCauchy('loc_shrink',beta = 1,shape = [n_covariates])
+            glob_shrink= pm.HalfCauchy('glob_shrink',beta = 1)
             coef = pm.Normal('coef',sd = (loc_shrink * glob_shrink),shape = [n_covariates])
 
         # Implemented per Piironnen and Vehtari '18
         elif coefficient_prior == 'finnish_horseshoe':
 
-            loc_shrink  = pm.HalfCauchy('loc_shrink_level',beta = 1,shape = [n_covariates])
-            glob_shrink = pm.HalfCauchy('glob_shrink_level',beta = 1)
+            loc_shrink  = pm.HalfCauchy('loc_shrink',beta = 1,shape = [n_covariates])
+            glob_shrink = pm.HalfCauchy('glob_shrink',beta = 1)
 
             # In order to get some of the values within the prior calculations,
             # we need to know the variance of the predictors.
