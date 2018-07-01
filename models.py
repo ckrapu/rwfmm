@@ -6,7 +6,7 @@ def rwfmm(functional_data,static_data,Y,tune=2000,draws = 1000,chains=2,
         func_coef_sd = 'prior',method='nuts',n_iter_approx=30000,
         scalarize=False,robust=False,func_coef_sd_hypersd = 0.05,
         coefficient_prior='flat',include_random_effect = True,
-        level_scale = 1.0):
+        level_scale = 1.0,sampler_kwargs = {},return_model_only = False):
     '''
     Fits a functional mixed model with a random-walk model of
     the functional coefficient. A range of different priors is available for
@@ -71,6 +71,11 @@ def rwfmm(functional_data,static_data,Y,tune=2000,draws = 1000,chains=2,
         mismatch between the sampler's guess at the mean of the functional
         coefficient and the actual contribution from that part of the model
         to the response.
+    sampler_kwargs: dict
+        Any additional arguments to be passed to pm.sample.
+    return_model_only: bool
+        If true, returns only the model object without sampling. This can be
+        helpful for debugging.
 
     Returns
     _______
@@ -171,15 +176,18 @@ def rwfmm(functional_data,static_data,Y,tune=2000,draws = 1000,chains=2,
         else:
             response = pm.Normal('response',mu = y_hat,sd = noise_sd,observed = Y)
 
+        if return_model_only:
+            return model
+
         # NUTS is the default PyMC3 sampler and is what we recommend for fitting.
         if method == 'nuts':
-            trace = pm.sample(draws,tune = tune,chains = chains)
+            trace = pm.sample(draws,tune = tune,chains = chains,**sampler_kwargs)
 
         # Metropolis-Hastings does poorly with lots of correlated parameters,
         # so this fitting method should only be used if T is small or you are
         # fitting a scalarized model.
         elif method == 'mh':
-            trace = pm.sample(draws,tune = tune,chains = chains,step = pm.Metropolis())
+            trace = pm.sample(draws,tune = tune,chains = chains,step = pm.Metropolis(),**sampler_kwargs)
 
         # There are a number of approximate inference methods available, but
         # none of them gave results that were close to what we got with MCMC.
