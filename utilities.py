@@ -1,5 +1,4 @@
 import matplotlib
-matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 import numpy as np
@@ -122,8 +121,9 @@ class FuncDataset(object):
         self.response = self.response_from_static + self.response_from_func + self.noise
 
 
-def get_data(response_col,functional_covariates,static_covariates,log_transform_response = False,T=336,standardize_inputs = False):
-    df = pd.read_pickle('/home/ubuntu/Dropbox/wfmm/intermediate/no_wavelet_dataframe_5_6.p')
+def get_data(response_col,functional_covariates,static_covariates,log_transform_response = False,T=336,standardize_inputs = False,
+            filename = '/home/ubuntu/Dropbox/wfmm/intermediate/no_wavelet_dataframe_5_6.p'):
+    df = pd.read_pickle(filename)
     P = df.id.unique().shape[0]
     V = df.visit.unique().shape[0]
     F = len(functional_covariates)
@@ -189,7 +189,7 @@ def get_data(response_col,functional_covariates,static_covariates,log_transform_
                 D_func[p,v,:,:] = 0.0
     assert np.all(np.isfinite(D_static))
     assert np.all(np.isfinite(D_func))
-    print '{0} patient/visit pairs have valid observations.'.format(np.sum(is_valid))
+
 
     if standardize_inputs:
         D_func   = (D_func - np.mean(D_func,axis = (0,1,2))) / np.std(D_func,axis = (0,1,2))
