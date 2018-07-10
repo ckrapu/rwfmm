@@ -151,10 +151,11 @@ def rwfmm(functional_data,static_data,Y,tune=2000,draws = 1000,chains=2,
 
             # The 'jumps' are the small deviations about the mean of the functional
             # coefficient, which is defined as 'level'.
+            scale        = pm.Flat('scale',shape = F)
             jumps        = pm.Normal('jumps',sd = func_coef_sd,shape=(T,F))
             random_walks = tt.cumsum(jumps,axis=0) + coef[C:]
 
-            func_coef = pm.Deterministic('func_coef',random_walks)
+            func_coef = pm.Deterministic('func_coef',random_walks + scale)
 
             # This is the additive term in y_hat that comes from the functional
             # part of the model.
