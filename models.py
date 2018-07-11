@@ -182,18 +182,18 @@ def rwfmm(functional_data,static_data,Y,
 
         # NUTS is the default PyMC3 sampler and is what we recommend for fitting.
         if method == 'nuts':
-            trace = pm.sample(draws,tune = tune,chains = chains,**sampler_kwargs)
+            trace = pm.sample(**sampler_kwargs)
 
         # Metropolis-Hastings does poorly with lots of correlated parameters,
         # so this fitting method should only be used if T is small or you are
         # fitting a scalarized model.
         elif method == 'mh':
-            trace = pm.sample(draws,tune = tune,chains = chains,step = pm.Metropolis(),**sampler_kwargs)
+            trace = pm.sample(step = pm.Metropolis(),**sampler_kwargs)
 
         # There are a number of approximate inference methods available, but
         # none of them gave results that were close to what we got with MCMC.
         else:
-            approx = pm.fit(n=n_iter_approx,method=method)
+            approx = pm.fit(method=method,**sampler_kwargs)
             trace = approx.sample(draws)
 
     return trace,model
