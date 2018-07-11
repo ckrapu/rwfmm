@@ -2,8 +2,8 @@ import pymc3 as pm
 import numpy as np
 import theano.tensor as tt
 
-def rwfmm(functional_data,static_data,Y,tune=2000,draws = 1000,chains=2,
-        func_coef_sd = 'prior',method='nuts',n_iter_approx=30000,
+def rwfmm(functional_data,static_data,Y,
+        func_coef_sd = 'prior',method='nuts',
         scalarize=False,robust=False,func_coef_sd_hypersd = 0.05,
         coefficient_prior='flat',include_random_effect = True,
         level_scale = 1.0,sampler_kwargs = {},return_model_only = False):
@@ -153,9 +153,9 @@ def rwfmm(functional_data,static_data,Y,tune=2000,draws = 1000,chains=2,
             # coefficient, which is defined as 'level'.
             scale        = pm.Flat('scale',shape = F)
             jumps        = pm.Normal('jumps',sd = func_coef_sd,shape=(T,F))
-            random_walks = tt.cumsum(jumps,axis=0) + coef[C:]
+            random_walks = tt.cumsum(jumps,axis=0) * scale + coef[C:]
 
-            func_coef = pm.Deterministic('func_coef',random_walks * scale)
+            func_coef = pm.Deterministic('func_coef',random_walks)
 
             # This is the additive term in y_hat that comes from the functional
             # part of the model.
