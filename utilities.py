@@ -4,27 +4,103 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-def sigmoid(x):
-    return 1 / (1 + np.exp(-x))
+def ar1(beta,sd,length):
+    '''Creates a realization of a AR(1) process with autoregresssion
+    coefficient 'beta', a jump standard deviation of 'sd' and is 'length'
+    elements long.'''
 
-def generate_random_sigmoid(T,squashiness = 0.2,vertical_scale = 0.01):
-    """Produces a vector f(x) where f is a sigmoid function."""
-    x = np.linspace(-1.0,1.0,T)
-    rescaling_factor = np.abs(np.random.randn()*squashiness)
-    f = sigmoid(x / rescaling_factor)
-    return f * vertical_scale
+    vector = np.zeros(length)
+    vector[0] = np.random.randn() * sd
+    for i in range(length-1):
+        vector[i+1] = vector[i] * beta + np.random.randn() * sd
+    return vector
 
-def generate_ar(T,coef = 0.9,jump_sd = 0.01):
-    """Creates a realization of an AR(1) process with normally distributed jumps."""
-    jumps = np.random.randn(T) * jump_sd
-    signal = np.zeros(T)
-    for i in range(1,T):
-        signal[i] = signal[i-1] * coef + jumps[i]
-    return signal
+def simulate_dataset(S,V,C,F,T,function_type,noise_ratio,error_type,autocorr=0.5):
+    '''Function for generating simulated data for a scalar-on-function
+    regression with longitudinal measurements and scalar covariates.'
 
-def generate_rw(T,vertical_scale = 0.03):
-    """Returns a scalar random walk in a numpy array of length T."""
-    return np.cumsum(np.random.randn(T)) * vertical_scale
+    Parameters
+    ----------
+    S : integer
+        Number of individuals / subjects
+    V : integer
+        Number of longitudinal measurements per individual
+    C : integer
+        Number of scalar (i.e. non-functional) covariates
+    F : integer
+        Number of functional covariates
+    T : integer
+        Number of elements for each functional covariate measurement
+    function_type : string
+        One of 'logistic', 'sinusoid', or 'spike'. Defines the shape of the
+        generated functional coefficient.
+    noise_ratio : float
+        The ratio of the residual error standard deviation to the standard deviation
+        of the across-subject/measurement conditional mean. Set this to be higher to
+        decrease the signal-to-noise ratio.
+    error_type : string
+        One of 'normal','cauchy', or 'autocorrelated'. Determines the residual distribution.
+        If 'autocorrelated' is selected, then the per-subject residuals are autocorrelated
+        across longitudinal measurements.
+    autocorr : float
+        If error_type is set to 'autocorrelated', then this sets the autoregressive coefficient.
+        Otherwise, this has no effect.
+
+    Returns
+    -------
+    functional_covariates : 4D Numpy array
+        Array of functional covariates with shape [S,V,T,F]
+    longitudinal_covariates : 3D Numpy array
+        Array of per-visit/longitudinal measurement covariates with shape [S,V,C]
+    response : 2D Numpy array
+        Array of scalar response variable for each individual and each measurement.
+        This has a shape of [S,V].
+    functional_coefficients : 2D Numpy array
+        Array of functional coefficients with shape [T,F]
+    longitudinal_coefficients : 1D Numpy array
+        Array of coefficients for the nonfunctional predictors with shape [C]
+    random_effect : 1D Numpy array
+        Per-subject intercepts in an array with shape [S]
+    '''
+
+    longitudinal_covariates  = np.random.randn(S,V,C)
+    functional_covariates    = np.random.randn(S,V,T,F)
+    random_effect            = np.random.randn(S)[:,np.newaxis].repeat(V,axis = 1)
+    longitudinal_coefficient = np.random.randn(C)
+
+    timesteps = np.arange(T)[:,np.newaxis].repeat(F,axis=1)
+
+    if function_type == 'logistic':
+        timesteps = np.linspace(-6,6,T)[:,np.newaxis].repeat(F,axis=1)
+        functional_coefficients = 1. / (1. + np.exp(-timesteps))
+    elif function_type == 'sinusoid':
+        timesteps = np.linspace(-3.14*3,3.14*3,T)[:,np.newaxis].repeat(F,axis=1)
+        functional_coefficients = np.sin(timesteps)
+    elif function_type == 'spike':
+        timesteps = np.linspace(-2,2,T)[:,np.newaxis].repeat(F,axis=1)
+        functional_coefficients = np.exp(-(timesteps/0.05)**2)
+    else:
+        raise ValueError('Function type not recognized.')
+
+    longitudinal_mean = np.einsum('ijk,k',longitudinal_covariates,longitudinal_coefficient)
+    functional_mean   = np.einsum('ijkl,kl',functional_covariates,functional_coefficients)
+    mean = random_effect + longitudinal_mean + functional_mean
+
+    if error_type == 'normal':
+        error = np.random.randn(S,V)
+
+    elif error_type == 'cauchy':
+        error = np.random.standard_t(10,size=[S,V])
+
+    elif error_type == 'autocorrelated':
+        error = np.zeros([S,V])
+        for s in range(S):
+            error[s,:] = autoregression(autocorr,0.5,V)
+    else:
+        raise ValueError('Error type not recognized.')
+
+    response = mean + error * noise_level * np.std(mean)
+    return functional_covariates,longitudinal_covariates,response,functional_coefficients,longitudinal_coefficient,random_effect
 
 def coef_plot(samples,upper = 97.5,lower = 2.5):
 
@@ -63,65 +139,6 @@ def multiple_coef_plot(samples,num_horizontal,num_vertical,titles,upper = 97.5,l
 
     return figure,axes
 
-
-
-
-
-class FuncDataset(object):
-
-    def __init__(self,n=300,p_static=8,p_func=4,T = 336,noise_sd = 0.1):
-        self.n         = n
-        self.p_static  = p_static
-        self.p_func    = p_func
-        self.T         = T
-        self.noise_sd  = noise_sd
-
-    def populate(self,seed=None,coefs_func = None,design_func = None,
-                            coef_func_producer = generate_random_sigmoid,
-                            design_func_producer= generate_rw):
-
-        if seed is not None:
-            np.random.seed(seed)
-
-        self.coef_func_producer   = coef_func_producer
-        self.design_func_producer = design_func_producer
-
-        self.coefs_func  = coefs_func
-        self.design_func = design_func
-
-        self.populate_static()
-        self.populate_func()
-        self.populate_responses()
-
-    def populate_static(self):
-        self.design_static = np.random.randn(self.n,self.p_static)
-        self.coef_static   = np.random.randn(self.p_static)
-
-    def populate_func(self):
-        if self.coefs_func is not None:
-            assert self.coefs_func.shape == (self.T,self.p_func)
-        else:
-            self.coefs_func = np.zeros([self.T,self.p_func])
-
-            for i in range(self.p_func):
-                self.coefs_func[:,i] = (self.coef_func_producer)(self.T)
-
-
-        if self.design_func is not None:
-            assert self.design_func.shape == (self.T,self.n)
-        else:
-            self.design_func = np.zeros([self.T,self.n])
-            for i in range(self.n):
-                self.design_func[:,i] = (self.design_func_producer)(self.T)
-
-    def populate_responses(self):
-
-        self.response_from_static = self.design_static.dot(self.coef_static)
-        self.response_from_func   =  np.mean(np.sum(self.coefs_func.T.dot(self.design_func),axis=0))
-
-        self.noise = np.random.normal(scale = self.noise_sd,size = self.n)
-
-        self.response = self.response_from_static + self.response_from_func + self.noise
 
 
 def get_data(response_col,functional_covariates,static_covariates,log_transform_response = False,T=336,standardize_inputs = False,
