@@ -41,7 +41,7 @@ def coef_plot(samples,upper = 97.5,lower = 2.5):
     plt.grid('on')
 
 def multiple_coef_plot(samples,num_horizontal,num_vertical,titles,upper = 97.5,lower = 2.5,fig_kwargs = {'figsize':(8,6),'sharex':True},
-                     xlabel='Timestep',ylabel='B(t)'):
+                     xlabel='Timestep',ylabel='B(t)',true_coef = None):
     _,T,F = samples.shape
     figure,axes = plt.subplots(num_vertical,num_horizontal,**fig_kwargs)
     axes = axes.ravel()
@@ -55,6 +55,9 @@ def multiple_coef_plot(samples,num_horizontal,num_vertical,titles,upper = 97.5,l
         axes[i].plot(timesteps,lower_percentile,color='k',linewidth = 1)
         axes[i].fill_between(timesteps,upper_percentile,lower_percentile,color='k',alpha = 0.1)
         axes[i].plot(timesteps,zeros,linewidth = 3, linestyle='--',alpha = 0.5,color='k')
+        if true_coef is not None:
+            axes[i].plot(timesteps,true_coef[i],linewidth = 3,alpha = 0.75,color='g')
+
         axes[i].set_title(titles[i])
     plt.tight_layout()
 
