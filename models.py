@@ -151,7 +151,7 @@ def rwfmm(functional_data,static_data,Y,
 
             # The 'jumps' are the small deviations about the mean of the functional
             # coefficient, which is defined as 'level'.
-            scale        = pm.Flat('scale',shape = F)
+            scale        = pm.HalfFlat('scale',shape = F)
             jumps        = pm.Normal('jumps',sd = func_coef_sd,shape=(T,F))
             random_walks = tt.cumsum(jumps,axis=0) * scale + coef[C:]
 
@@ -159,7 +159,7 @@ def rwfmm(functional_data,static_data,Y,
 
             # This is the additive term in y_hat that comes from the functional
             # part of the model.
-            func_contrib = tt.tensordot(functional_data,func_coef,axes=[[2,3],[0,1]])/T
+            func_contrib = tt.tensordot(functional_data,func_coef,axes=[[2,3],[0,1]])
 
         # The part of y_hat that comes from the static covariates
         static_contrib = tt.tensordot(static_data,coef[0:C],axes = [2,0])
