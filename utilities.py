@@ -15,7 +15,7 @@ def ar1(beta,sd,length):
         vector[i+1] = vector[i] * beta + np.random.randn() * sd
     return vector
 
-def simulate_dataset(S,V,C,F,T,function_type,noise_ratio,error_type,autocorr=0.5):
+def simulate_dataset(S,V,C,F,T,function_type,error_sd,error_type,autocorr=0.5,functional_covariate_type='normal'):
     '''Function for generating simulated data for a scalar-on-function
     regression with longitudinal measurements and scalar covariates.'
 
@@ -34,10 +34,8 @@ def simulate_dataset(S,V,C,F,T,function_type,noise_ratio,error_type,autocorr=0.5
     function_type : string
         One of 'logistic', 'sinusoid', or 'spike'. Defines the shape of the
         generated functional coefficient.
-    noise_ratio : float
-        The ratio of the residual error standard deviation to the standard deviation
-        of the across-subject/measurement conditional mean. Set this to be higher to
-        decrease the signal-to-noise ratio.
+    error_sd : float
+        The standard deviation of the residual error distribution.
     error_type : string
         One of 'normal','cauchy', or 'autocorrelated'. Determines the residual distribution.
         If 'autocorrelated' is selected, then the per-subject residuals are autocorrelated
@@ -45,6 +43,10 @@ def simulate_dataset(S,V,C,F,T,function_type,noise_ratio,error_type,autocorr=0.5
     autocorr : float
         If error_type is set to 'autocorrelated', then this sets the autoregressive coefficient.
         Otherwise, this has no effect.
+    functional_covariate_type : string
+        One of 'normal' or 'autocorrelated'. The first sets the functional covariates to have a
+        standard normal distribution. The second sets the functional covariates to be AR(1) with
+        a regression coefficient of 0.5 and a jump standard deviation of 0.5.
 
     Returns
     -------
@@ -64,7 +66,16 @@ def simulate_dataset(S,V,C,F,T,function_type,noise_ratio,error_type,autocorr=0.5
     '''
 
     longitudinal_covariates  = np.random.randn(S,V,C)
-    functional_covariates    = np.random.randn(S,V,T,F)
+
+    if functional_covariate_type == 'normal':
+        functional_covariates    = np.random.randn(S,V,T,F)
+    elif functional_covariate_type == 'autocorrelated':
+        functional_covariates = np.zeros([S,V,T,F])
+        for s,v,f in product(range(S),range(V),range(F)):
+            functional_covariates[s,v,:,f] = ar1(0.5,0.5,T)
+    else:
+        raise ValueError('Covariate type not recognized.')
+
     random_effect            = np.random.randn(S)[:,np.newaxis].repeat(V,axis = 1)
     longitudinal_coefficient = np.random.randn(C)
 
@@ -99,8 +110,9 @@ def simulate_dataset(S,V,C,F,T,function_type,noise_ratio,error_type,autocorr=0.5
     else:
         raise ValueError('Error type not recognized.')
 
-    response = mean + error * noise_level * np.std(mean)
+    response = mean + error * error_sd
     return functional_covariates,longitudinal_covariates,response,functional_coefficients,longitudinal_coefficient,random_effect
+
 
 def coef_plot(samples,upper = 97.5,lower = 2.5):
 
@@ -143,6 +155,8 @@ def multiple_coef_plot(samples,num_horizontal,num_vertical,titles,upper = 97.5,l
 
 def get_data(response_col,functional_covariates,static_covariates,log_transform_response = False,T=336,standardize_inputs = False,
             filename = '/home/ubuntu/Dropbox/wfmm/intermediate/no_wavelet_dataframe_5_6.p'):
+    '''Function for loading data from a specific data file for use in functional
+    linear mixed model.'''
     df = pd.read_pickle(filename)
     P = df.id.unique().shape[0]
     V = df.visit.unique().shape[0]

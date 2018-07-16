@@ -7,7 +7,9 @@ def rwfmm(functional_data,static_data,Y,
         scalarize=False,robust=False,func_coef_sd_hypersd = 0.05,
         coefficient_prior='flat',include_random_effect = True,
         variable_func_scale = False,
-        level_scale = 1.0,sampler_kwargs = {},return_model_only = False):
+        level_scale = 1.0,
+        sampler_kwargs = {'init':'advi','chains':1,'tune':500,'draws':500},
+        return_model_only = False):
     '''
     Fits a functional mixed model with a random-walk model of
     the functional coefficient. A range of different priors is available for
