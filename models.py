@@ -3,9 +3,10 @@ import numpy as np
 import theano.tensor as tt
 
 def rwfmm(functional_data,static_data,Y,
-        func_coef_sd = 'prior',method='nuts',
+        func_coef_sd = 0.1,method='nuts',
         scalarize=False,robust=False,func_coef_sd_hypersd = 0.05,
         coefficient_prior='flat',include_random_effect = True,
+        variable_func_scale = False,
         level_scale = 1.0,sampler_kwargs = {},return_model_only = False):
     '''
     Fits a functional mixed model with a random-walk model of
@@ -65,6 +66,11 @@ def rwfmm(functional_data,static_data,Y,
         The options are "flat","normal","horseshoe","finnish_horseshoe".
     include_random_effect: bool
         Determines whether or not a per-subject random intercept is included.
+    variable_func_scale : bool
+        Determines whether or not to allow the functional coefficients be
+        multiplied by a positive number. This can lead to identifiability issues
+        if a weak prior is specified on the functional coefficient evolution
+        variance.
     level_scale: float
         The order of magnitude of the mean of the functional coefficient.
         This will usually not need to be adjuste unless there is a major
@@ -100,22 +106,22 @@ def rwfmm(functional_data,static_data,Y,
 
         if include_random_effect:
             random_effect_mean = pm.Flat('random_effect_mean')
-            random_effect_sd   = pm.HalfCauchy('random_effect_sd',beta = 1.0)
+            random_effect_sd   = pm.HalfCauchy('random_effect_sd',beta = 1.)
             random_effect_unscaled = pm.Normal('random_effect_unscaled',shape = [S,1])
-            random_effect      = random_effect_unscaled * random_effect_sd + random_effect_mean
+            random_effect      = pm.Deterministic('random_effect',random_effect_unscaled * random_effect_sd + random_effect_mean)
         else:
-            random_effect  = 0.0
+            random_effect  = 0.
 
         if coefficient_prior == 'flat':
             coef = pm.Flat('coef',shape = n_covariates)
 
         elif coefficient_prior == 'normal':
-            coef_sd = pm.HalfCauchy('coef_sd',beta = 1.0)
+            coef_sd = pm.HalfCauchy('coef_sd',beta = 1.)
             coef    = pm.Normal('coef',sd = coef_sd,shape = [n_covariates] )
 
         elif coefficient_prior == 'cauchy':
             coef_sd = pm.HalfCauchy('coef_sd',beta = 1.0)
-            coef    = pm.Cauchy('coef',alpha = 0.0, beta = coef_sd,shape = [n_covariates] )
+            coef    = pm.Cauchy('coef',alpha = 0., beta = coef_sd,shape = [n_covariates] )
 
         elif coefficient_prior == 'horseshoe':
             loc_shrink = pm.HalfCauchy('loc_shrink',beta = 1,shape = [n_covariates])
@@ -151,9 +157,13 @@ def rwfmm(functional_data,static_data,Y,
 
             # The 'jumps' are the small deviations about the mean of the functional
             # coefficient, which is defined as 'level'.
-            scale        = pm.HalfFlat('scale',shape = F)
+            if variable_func_scale:
+                log_scale = pm.Normal('log_scale',shape = F)
+            else:
+                log_scale = 0.0
+
             jumps        = pm.Normal('jumps',sd = func_coef_sd,shape=(T,F))
-            random_walks = tt.cumsum(jumps,axis=0) * scale + coef[C:]
+            random_walks = tt.cumsum(jumps,axis=0) * tt.exp(log_scale) + coef[C:]
 
             func_coef = pm.Deterministic('func_coef',random_walks)
 
