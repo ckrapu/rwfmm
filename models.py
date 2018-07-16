@@ -7,7 +7,7 @@ def rwfmm(functional_data,static_data,Y,
         scalarize=False,robust=False,func_coef_sd_hypersd = 0.05,
         coefficient_prior='flat',include_random_effect = True,
         variable_func_scale = False,time_rescale_func = False,
-        sampler_kwargs = {'init':'advi','chains':1,'tune':500,'draws':500},
+        sampler_kwargs = {'init':'adapt_diag','chains':1,'tune':500,'draws':500},
         return_model_only = False):
     '''
     Fits a functional mixed model with a random-walk model of
@@ -76,7 +76,7 @@ def rwfmm(functional_data,static_data,Y,
         If true, divides the functional coefficient by T. This can help make
         the coefficient more interpretable.
     sampler_kwargs: dict
-        Any additional arguments to be passed to pm.sample.
+        Any additional arguments to be passed to pm.sample().
     return_model_only: bool
         If true, returns only the model object without sampling. This can be
         helpful for debugging.
