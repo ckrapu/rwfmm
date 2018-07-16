@@ -18,7 +18,8 @@ should already be installed with PyMC3.
 
 ## Authors
 
-* **Chris Krapu** **Drew Day**
+* **Chris Krapu (ckrapu@gmail.com)**
+* **Drew Day**
 
 
 ## License
