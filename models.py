@@ -3,11 +3,10 @@ import numpy as np
 import theano.tensor as tt
 
 def rwfmm(functional_data,static_data,Y,
-        func_coef_sd = 0.1,method='nuts',
+        func_coef_sd = 'prior',method='nuts',
         scalarize=False,robust=False,func_coef_sd_hypersd = 0.05,
         coefficient_prior='flat',include_random_effect = True,
-        variable_func_scale = False,
-        level_scale = 1.0,
+        variable_func_scale = False,time_rescale_func = False,
         sampler_kwargs = {'init':'advi','chains':1,'tune':500,'draws':500},
         return_model_only = False):
     '''
@@ -73,12 +72,9 @@ def rwfmm(functional_data,static_data,Y,
         multiplied by a positive number. This can lead to identifiability issues
         if a weak prior is specified on the functional coefficient evolution
         variance.
-    level_scale: float
-        The order of magnitude of the mean of the functional coefficient.
-        This will usually not need to be adjuste unless there is a major
-        mismatch between the sampler's guess at the mean of the functional
-        coefficient and the actual contribution from that part of the model
-        to the response.
+    time_rescale_func : bool
+        If true, divides the functional coefficient by T. This can help make
+        the coefficient more interpretable.
     sampler_kwargs: dict
         Any additional arguments to be passed to pm.sample.
     return_model_only: bool
@@ -166,8 +162,10 @@ def rwfmm(functional_data,static_data,Y,
 
             jumps        = pm.Normal('jumps',sd = func_coef_sd,shape=(T,F))
             random_walks = tt.cumsum(jumps,axis=0) * tt.exp(log_scale) + coef[C:]
-
-            func_coef = pm.Deterministic('func_coef',random_walks)
+            if time_rescale_func:
+                func_coef = pm.Deterministic('func_coef',random_walks / T)
+            else:
+                func_coef = pm.Deterministic('func_coef',random_walks)
 
             # This is the additive term in y_hat that comes from the functional
             # part of the model.
