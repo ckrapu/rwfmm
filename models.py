@@ -1,14 +1,16 @@
 import pymc3 as pm
 import numpy as np
+import scipy as sp
 import theano.tensor as tt
 
-def rwfmm(functional_data,static_data,Y,
+
+rwfmm(functional_data,static_data,Y,
         func_coef_sd = 'prior',method='nuts',
         scalarize=False,robust=False,func_coef_sd_hypersd = 0.05,
         coefficient_prior='flat',include_random_effect = True,
         variable_func_scale = False,time_rescale_func = False,
         sampler_kwargs = {'init':'adapt_diag','chains':1,'tune':500,'draws':500},
-        return_model_only = False):
+        return_model_only = False,n_spline_knots = 10,func_coef_type = 'random_walk',spline_degree=4):
     '''
     Fits a functional mixed model with a random-walk model of
     the functional coefficient. A range of different priors is available for
@@ -80,6 +82,25 @@ def rwfmm(functional_data,static_data,Y,
     return_model_only: bool
         If true, returns only the model object without sampling. This can be
         helpful for debugging.
+    func_coef_type : string
+        One of 'random_walk', 'bspline_recursive', or 'bspline_design'. This
+        determines how the functional coefficient will be parameterized. If it
+        is 'random_walk', then the coefficient will be computed as the cumulative
+        sum of many small normally-distributed jumps whose standard deviation
+        is controlled by 'func_coef_sd'. Alternatively, if one of the bspline
+        options is used, then the functional coefficient will be a bspline. The option
+        'bspline_recursive' builds the coefficient using the de Boor algorithm
+        while the 'bspline_design' option builds a design matrix using scipy's bspline
+        functionality and then estimates the coefficients linking that matrix to the
+        functional coefficients.
+    n_spline_knots : int
+        In the event that the functional coefficient is one of the bspline choices,
+        then this controls how many knots or breakpoints the spline has. In general,
+        higher numbers for this value are required for higher spline orders.
+    spline_degree : int
+        The order of the spline if the functional coefficient is parameterized as a
+        bspline. This is also the order of the polynomial for each spline section
+        plus 1. Set this equal to 4 for cubic polynomial approximations in the spline.
 
     Returns
     _______
@@ -103,10 +124,10 @@ def rwfmm(functional_data,static_data,Y,
         n_covariates = F + C
 
         if include_random_effect:
-            random_effect_mean = pm.Flat('random_effect_mean')
-            random_effect_sd   = pm.HalfCauchy('random_effect_sd',beta = 1.)
+            random_effect_mean     = pm.Flat('random_effect_mean')
+            random_effect_sd       = pm.HalfCauchy('random_effect_sd',beta = 1.)
             random_effect_unscaled = pm.Normal('random_effect_unscaled',shape = [S,1])
-            random_effect      = pm.Deterministic('random_effect',random_effect_unscaled * random_effect_sd + random_effect_mean)
+            random_effect          = pm.Deterministic('random_effect',random_effect_unscaled * random_effect_sd + random_effect_mean)
         else:
             random_effect  = 0.
 
@@ -148,24 +169,56 @@ def rwfmm(functional_data,static_data,Y,
         # Setting scalarize to True makes this into a vanilla linear mixed model.
         if scalarize:
             func_contrib = tt.tensordot(tt.mean(functional_data,axis=2),level,axes=[[2],[0]])
-
         else:
-            if func_coef_sd == 'prior':
-                func_coef_sd = pm.HalfNormal('func_coef_sd',sd = func_coef_sd_hypersd,shape=F)
+            if func_coef_type == 'random_walk':
 
-            # The 'jumps' are the small deviations about the mean of the functional
-            # coefficient, which is defined as 'level'.
-            if variable_func_scale:
-                log_scale = pm.Normal('log_scale',shape = F)
-            else:
-                log_scale = 0.0
+                    if func_coef_sd == 'prior':
+                        func_coef_sd = pm.HalfNormal('func_coef_sd',sd = func_coef_sd_hypersd,shape=F)
 
-            jumps        = pm.Normal('jumps',sd = func_coef_sd,shape=(T,F))
-            random_walks = tt.cumsum(jumps,axis=0) * tt.exp(log_scale) + coef[C:]
-            if time_rescale_func:
-                func_coef = pm.Deterministic('func_coef',random_walks / T)
+                    # The 'jumps' are the small deviations about the mean of the functional
+                    # coefficient, which is defined as 'level'.
+                    if variable_func_scale:
+                        log_scale = pm.Normal('log_scale',shape = F)
+                    else:
+                        log_scale = 0.0
+
+                    jumps        = pm.Normal('jumps',sd = func_coef_sd,shape=(T,F))
+                    random_walks = tt.cumsum(jumps,axis=0) * tt.exp(log_scale) + coef[C:]
+                    if time_rescale_func:
+                        func_coef = pm.Deterministic('func_coef',random_walks / T)
+                    else:
+                        func_coef = pm.Deterministic('func_coef',random_walks)
+
+            elif func_coef_type == 'bspline_design':
+                x = np.linspace(-4,4,T)
+                spline_knots = np.linspace(-4,4,n_spline_knots)
+                basis_funcs = sp.interpolate.BSpline(spline_knots, np.eye(n_spline_knots), k=spline_degree)
+
+                # Design matrix for spline basis
+                # Each column is a different basis function and each row is a
+                # different timestep or point in the functional domain
+                Bx = basis_funcs(x)
+
+                # If this produces a curve which is too spiky or rapidly-varying,
+                # then a smoothing prior such as a Gaussian random walk could
+                # instead be used here.
+                spline_coef = pm.Flat('spline_coef',shape = [n_spline_knots,F])
+
+                # This inner product sums over the spline coefficients
+                func_coef = pm.Deterministic('func_coef', (tt.tensordot(Bx,spline_coef,axes=[[1],[0]])+ coef[C:])/T)
+
+            elif func_coef_type == 'bspline_recursive':
+                n_spline_coefficients = spline_degree + n_spline_knots + 1
+                spline_coef = pm.Flat('spline_coef',shape = [n_spline_coefficients,F])
+                x = np.linspace(-4,4,T)
+
+                func_coefs = []
+                for f in range(F):
+                    func_coefs.append(utilities.bspline(spline_coef[:,f],spline_degree,n_spline_knots,x))
+                func_coef = pm.Deterministic('func_coef',(tt.stack(func_coefs,axis=1) + coef[C:]) / T)
+
             else:
-                func_coef = pm.Deterministic('func_coef',random_walks)
+                raise ValueError('Functional coefficient type not recognized.""')
 
             # This is the additive term in y_hat that comes from the functional
             # part of the model.
@@ -178,6 +231,7 @@ def rwfmm(functional_data,static_data,Y,
 
         # y_hat is the predictive mean.
         y_hat = pm.Deterministic('y_hat', static_contrib + func_contrib + random_effect)
+        #y_hat = pm.Deterministic('y_hat', static_contrib +func_contrib )
 
         # If the robust error option is used, then a gamma-Student-T distribution
         # is placed on the residuals.
