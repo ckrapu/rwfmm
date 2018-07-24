@@ -3,14 +3,18 @@ import numpy as np
 import scipy as sp
 import theano.tensor as tt
 
+import utilities
 
-rwfmm(functional_data,static_data,Y,
-        func_coef_sd = 'prior',method='nuts',
-        scalarize=False,robust=False,func_coef_sd_hypersd = 0.05,
-        coefficient_prior='flat',include_random_effect = True,
-        variable_func_scale = False,time_rescale_func = False,
+
+
+def rwfmm(functional_data,static_data,Y,
+        func_coef_sd = 'prior', method='nuts',
+        scalarize=False, robust=False, func_coef_sd_hypersd = 0.05,
+        coefficient_prior='flat', include_random_effect = True,
+        variable_func_scale = False, time_rescale_func = False,
         sampler_kwargs = {'init':'adapt_diag','chains':1,'tune':500,'draws':500},
-        return_model_only = False,n_spline_knots = 10,func_coef_type = 'random_walk',spline_degree=4):
+        return_model_only = False, n_spline_knots = 10,
+        func_coef_type = 'random_walk', spline_degree = 4):
     '''
     Fits a functional mixed model with a random-walk model of
     the functional coefficient. A range of different priors is available for
@@ -184,10 +188,7 @@ rwfmm(functional_data,static_data,Y,
 
                     jumps        = pm.Normal('jumps',sd = func_coef_sd,shape=(T,F))
                     random_walks = tt.cumsum(jumps,axis=0) * tt.exp(log_scale) + coef[C:]
-                    if time_rescale_func:
-                        func_coef = pm.Deterministic('func_coef',random_walks / T)
-                    else:
-                        func_coef = pm.Deterministic('func_coef',random_walks)
+                    func_coef = pm.Deterministic('func_coef',random_walks)
 
             elif func_coef_type == 'bspline_design':
                 x = np.linspace(-4,4,T)
@@ -223,7 +224,8 @@ rwfmm(functional_data,static_data,Y,
             # This is the additive term in y_hat that comes from the functional
             # part of the model.
             func_contrib = tt.tensordot(functional_data,func_coef,axes=[[2,3],[0,1]])
-
+            if time_rescale_func:
+                func_contrib = func_contrib / T
         # The part of y_hat that comes from the static covariates
         static_contrib = tt.tensordot(static_data,coef[0:C],axes = [2,0])
 
