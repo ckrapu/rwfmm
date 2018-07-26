@@ -1,8 +1,10 @@
-import matplotlib
 import matplotlib.pyplot as plt
-
 import numpy as np
 import pandas as pd
+import theano
+import theano.tensor as tt
+
+theano.config.compute_test_value = 'ignore'
 
 def ar1(beta,sd,length):
     '''Creates a realization of a AR(1) process with autoregresssion
@@ -128,25 +130,35 @@ def coef_plot(samples,upper = 97.5,lower = 2.5):
     plt.ylabel('B(t)')
     plt.grid('on')
 
-def multiple_coef_plot(samples,num_horizontal,num_vertical,titles,upper = 97.5,lower = 2.5,fig_kwargs = {'figsize':(8,6),'sharex':True},
-                     xlabel='Timestep',ylabel='B(t)',true_coef = None):
-    _,T,F = samples.shape
+import matplotlib.patches as mpatches
+def multiple_coef_plot(samples_array,num_horizontal,num_vertical,titles,upper = 97.5,lower = 2.5,fig_kwargs = {'figsize':(8,6),'sharex':True},
+                     xlabel='Timestep',ylabel='B(t)',true_coef = None,colors = ['k'],trace_labels = [''],true_color='k'):
+    if type(samples_array) != list:
+        samples_array = [samples_array]
+
+    _,T,F = samples_array[0].shape
     figure,axes = plt.subplots(num_vertical,num_horizontal,**fig_kwargs)
     axes = axes.ravel()
     timesteps = np.arange(T)
     zeros = np.zeros_like(timesteps)
-    for i in range(F):
-        upper_percentile = np.percentile(samples[:,:,i],upper,axis=0)
-        lower_percentile = np.percentile(samples[:,:,i],lower,axis=0)
-        axes[i].plot(timesteps,np.median(samples[:,:,i],axis = 0),color='k',label = 'Median',linewidth = 2)
-        axes[i].plot(timesteps,upper_percentile,color='k',linewidth = 1)
-        axes[i].plot(timesteps,lower_percentile,color='k',linewidth = 1)
-        axes[i].fill_between(timesteps,upper_percentile,lower_percentile,color='k',alpha = 0.1)
-        axes[i].plot(timesteps,zeros,linewidth = 3, linestyle='--',alpha = 0.5,color='k')
-        if true_coef is not None:
-            axes[i].plot(timesteps,true_coef[i],linewidth = 3,alpha = 0.75,color='g')
+    proxy_artists = []
+    for j,samples in enumerate(samples_array):
+        for i in range(F):
+            upper_percentile = np.percentile(samples[:,:,i],upper,axis=0)
+            lower_percentile = np.percentile(samples[:,:,i],lower,axis=0)
+            axes[i].plot(timesteps,np.median(samples[:,:,i],axis = 0),color=colors[j],label = 'Median',linewidth = 2)
+            axes[i].plot(timesteps,upper_percentile,color=colors[j],linewidth = 1)
+            axes[i].plot(timesteps,lower_percentile,color=colors[j],linewidth = 1)
+            axes[i].fill_between(timesteps,upper_percentile,lower_percentile,color=colors[j],alpha = 0.1)
+            axes[i].plot(timesteps,zeros,linewidth = 3, linestyle='--',alpha = 0.5,color='k')
+            if true_coef is not None:
+                axes[i].plot(timesteps,true_coef[i],linewidth = 3,alpha = 0.75,color=true_color)
 
-        axes[i].set_title(titles[i])
+            axes[i].set_title(titles[i])
+        proxy_artists.append(mpatches.Patch(color=colors[j]))
+
+    if len(samples_array) > 1:
+        plt.figlegend(proxy_artists,trace_labels,loc = 'upper center',ncol = len(samples_array),bbox_to_anchor = (.5,1.04))
     plt.tight_layout()
 
     return figure,axes
@@ -154,7 +166,7 @@ def multiple_coef_plot(samples,num_horizontal,num_vertical,titles,upper = 97.5,l
 
 
 def get_data(response_col,functional_covariates,static_covariates,log_transform_response = False,T=336,standardize_inputs = False,
-            filename = '/home/ubuntu/Dropbox/wfmm/intermediate/no_wavelet_dataframe_5_6.p'):
+            filename = '/home/ckrapu/Dropbox/wfmm/intermediate/no_wavelet_dataframe_5_6.p'):
     '''Function for loading data from a specific data file for use in functional
     linear mixed model.'''
     df = pd.read_pickle(filename)
@@ -230,3 +242,62 @@ def get_data(response_col,functional_covariates,static_covariates,log_transform_
         D_static = (D_static - np.mean(D_static,axis = (0,1))) / np.std(D_static,axis = (0,1))
 
     return D_func,D_static,Y
+
+def build_B_spline_deg_zero_degree_basis_fns(breaks, x):
+    """Build B spline 0 order basis coefficients with knots at 'breaks'.
+    N_{i,0}(x) = { 1 if u_i <= x < u_{i+1}, 0 otherwise }
+    """
+    expr = []
+    expr.append(tt.switch(x<breaks[1], 1, 0))
+    for i in range(1, len(breaks)-2):
+        l_break = breaks[i]
+        u_break = breaks[i+1]
+        expr.append(
+            tt.switch((x>=l_break)&(x<u_break), 1, 0) )
+    expr.append( tt.switch(x>=breaks[-2], 1, 0) )
+    return expr
+
+def build_B_spline_higher_degree_basis_fns(
+        breaks, prev_degree_coefs, degree, x):
+    """Build the higer order B spline basis coefficients
+    N_{i,p}(x) = ((x-u_i)/(u_{i+p}-u_i))N_{i,p-1}(x) \
+               + ((u_{i+p+1}-x)/(u_{i+p+1}-u_{i+1}))N_{i+1,p-1}(x)
+    """
+    assert degree > 0
+    coefs = []
+    for i in range(len(prev_degree_coefs)-1):
+        alpha1 = (x-breaks[i])/(breaks[i+degree]-breaks[i]+1e-12)
+        alpha2 = (breaks[i+degree+1]-x)/(breaks[i+degree+1]-breaks[i+1]+1e-12)
+        coef = alpha1*prev_degree_coefs[i] + alpha2*prev_degree_coefs[i+1]
+        coefs.append(coef)
+    return coefs
+
+def build_B_spline_basis_fns(breaks, max_degree, x):
+    curr_basis_coefs = build_B_spline_deg_zero_degree_basis_fns(breaks, x)
+    for degree in range(1, max_degree+1):
+        curr_basis_coefs = build_B_spline_higher_degree_basis_fns(
+            breaks, curr_basis_coefs, degree, x)
+    return curr_basis_coefs
+
+def spline_fn_expr(breaks, intercepts, degree, x):
+    basis_fns = build_B_spline_basis_fns(breaks, degree, x)
+    spline = 0
+    for i, basis in enumerate(basis_fns):
+        spline += intercepts[i]*basis
+    return spline
+
+def bspline(intercepts,degree,n_bins,domain):
+    breaks = np.histogram(domain, n_bins)[1][1:-1]
+    for i in range(degree+1):
+        breaks = np.insert(breaks, 0, domain.min()-1e-6)
+        breaks = np.append(breaks, domain.max()+1e-6)
+    return spline_fn_expr(breaks, intercepts, degree, domain)
+
+def compile_spline(data,n_bins,degree,intercepts):
+    breaks = np.histogram(data, n_bins)[1][1:-1]
+    for i in range(degree+1):
+        breaks = np.insert(breaks, 0, data.min()-1e-6)
+        breaks = np.append(breaks, data.max()+1e-6)
+    xs = tt.vector(dtype=theano.config.floatX)
+    f = theano.function([intercepts, xs],spline_fn_expr(breaks, intercepts, degree, xs))
+    return f
