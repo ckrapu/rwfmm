@@ -206,7 +206,7 @@ def rwfmm(functional_data,static_data,Y,
                 spline_coef = pm.Flat('spline_coef',shape = [n_spline_knots,F])
 
                 # This inner product sums over the spline coefficients
-                func_coef = pm.Deterministic('func_coef', (tt.tensordot(Bx,spline_coef,axes=[[1],[0]])+ coef[C:])/T)
+                func_coef = pm.Deterministic('func_coef', (tt.tensordot(Bx,spline_coef,axes=[[1],[0]])+ coef[C:]))
 
             elif func_coef_type == 'bspline_recursive':
                 n_spline_coefficients = spline_degree + n_spline_knots + 1
@@ -216,7 +216,7 @@ def rwfmm(functional_data,static_data,Y,
                 func_coefs = []
                 for f in range(F):
                     func_coefs.append(utilities.bspline(spline_coef[:,f],spline_degree,n_spline_knots,x))
-                func_coef = pm.Deterministic('func_coef',(tt.stack(func_coefs,axis=1) + coef[C:]) / T)
+                func_coef = pm.Deterministic('func_coef',(tt.stack(func_coefs,axis=1) + coef[C:]))
 
             else:
                 raise ValueError('Functional coefficient type not recognized.""')
