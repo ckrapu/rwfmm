@@ -15,7 +15,7 @@ def rwfmm(functional_data,static_data,Y,
         sampler_kwargs = {'init':'adapt_diag','chains':1,'tune':500,'draws':500},
         return_model_only = False, n_spline_knots = 10,
         func_coef_type = 'random_walk', spline_degree = 3,spline_coef_sd = 5.,
-        spline_coef_prior = 'flat',spline_rw_sd = 5.):
+        spline_coef_prior = 'flat',spline_rw_sd = 5.,average_every_n = 1):
     '''
     Fits a functional mixed model with a random-walk model of
     the functional coefficient. A range of different priors is available for
@@ -115,6 +115,12 @@ def rwfmm(functional_data,static_data,Y,
         Either 'prior' or a float. This controls how much the spline coefficients
         are allowed to jump when using a random walk for the spline coefficient
         prior.
+    average_every_n : int
+        This is used to average every n measurements of the functional data
+        together. For example, if the functional data corresponds to 96 hourly
+        timesteps' worth of data, setting this to 4 would take the 24 hour average
+        and reduce the size of T from 96 to 24. The default setting of 1 leaves
+        the data unchanged.
 
     Returns
     _______
@@ -128,6 +134,9 @@ def rwfmm(functional_data,static_data,Y,
     with pm.Model() as model:
         S,V,T,F = functional_data.shape
         _,_,C   = static_data.shape
+
+        functional_data = np.mean(functional_data.reshape(-1, average_every_n), axis=1)
+
 
         # We want to make sure the two data arrays agree in the number of
         # subjects (S) and visits (V).
