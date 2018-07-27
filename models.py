@@ -8,13 +8,14 @@ import utilities
 
 
 def rwfmm(functional_data,static_data,Y,
-        func_coef_sd = 'prior', method='nuts',
+        func_coef_sd = 0.1, method='nuts',
         scalarize=False, robust=False, func_coef_sd_hypersd = 0.05,
         coefficient_prior='flat', include_random_effect = True,
-        variable_func_scale = False, time_rescale_func = False,
+        variable_func_scale = True, time_rescale_func = False,
         sampler_kwargs = {'init':'adapt_diag','chains':1,'tune':500,'draws':500},
         return_model_only = False, n_spline_knots = 10,
-        func_coef_type = 'random_walk', spline_degree = 4):
+        func_coef_type = 'random_walk', spline_degree = 3,spline_coef_sd = 5.,
+        spline_coef_prior = 'flat',spline_rw_sd = 5.):
     '''
     Fits a functional mixed model with a random-walk model of
     the functional coefficient. A range of different priors is available for
@@ -105,6 +106,15 @@ def rwfmm(functional_data,static_data,Y,
         The order of the spline if the functional coefficient is parameterized as a
         bspline. This is also the order of the polynomial for each spline section
         plus 1. Set this equal to 4 for cubic polynomial approximations in the spline.
+    spline_coef_sd : float
+        The standard deviation of the normal prior on the spline coefficients.
+    spline_coef_prior : string
+        One of 'normal', 'flat', or 'random_walk'. This controls how the
+        bspline coefficients are smoothed.
+    spline_rw_sd : string or float
+        Either 'prior' or a float. This controls how much the spline coefficients
+        are allowed to jump when using a random walk for the spline coefficient
+        prior.
 
     Returns
     _______
@@ -203,14 +213,22 @@ def rwfmm(functional_data,static_data,Y,
                 # If this produces a curve which is too spiky or rapidly-varying,
                 # then a smoothing prior such as a Gaussian random walk could
                 # instead be used here.
-                spline_coef = pm.Flat('spline_coef',shape = [n_spline_knots,F])
-
+                if spline_coef_prior == 'normal':
+                    spline_coef = pm.Normal('spline_coef',sd = spline_coef_sd,shape = [n_spline_knots,F])
+                elif spline_coef_prior == 'flat':
+                    spline_coef = pm.Flat('spline_coef',shape = [n_spline_knots,F])
+                elif spline_coef_prior == 'random_walk':
+                    if spline_rw_sd == 'prior':
+                        spline_rw_sd = pm.HalfNormal('spline_rw_sd',sd = 2.5,shape = F)
+                    spline_initial_coef = pm.Normal('spline_initial_coef',shape = F)
+                    spline_jumps = pm.Normal('spline_jumps',shape = [n_spline_knots,F])
+                    spline_coef = pm.Deterministic('spline_coef',spline_jumps * spline_rw_sd + spline_initial_coef)
                 # This inner product sums over the spline coefficients
                 func_coef = pm.Deterministic('func_coef', (tt.tensordot(Bx,spline_coef,axes=[[1],[0]])+ coef[C:]))
 
             elif func_coef_type == 'bspline_recursive':
                 n_spline_coefficients = spline_degree + n_spline_knots + 1
-                spline_coef = pm.Flat('spline_coef',shape = [n_spline_coefficients,F])
+                spline_coef = pm.Normal('spline_coef',sd = spline_coef_sd,shape = [n_spline_coefficients,F])
                 x = np.linspace(-4,4,T)
 
                 func_coefs = []
