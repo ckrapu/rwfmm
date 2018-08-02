@@ -2,6 +2,7 @@ import pymc3 as pm
 import numpy as np
 import scipy as sp
 import theano.tensor as tt
+import patsy as p
 
 import utilities
 
@@ -209,14 +210,9 @@ def rwfmm(functional_data,static_data,Y,
                 func_coef = pm.Deterministic('func_coef',random_walks)
 
         elif func_coef_type == 'bspline_design':
-            x = np.linspace(-4,4,T)
-            spline_knots = np.linspace(-4,4,n_spline_knots)
-            basis_funcs = sp.interpolate.BSpline(spline_knots, np.eye(n_spline_knots), k=spline_degree)
+            x = np.arange(T)
+            natural_basis = p.dmatrix("cr(x, df = {0}) - 1".format(n_spline_knots),{"x":x},return_type = 'dataframe').values
 
-            # Design matrix for spline basis
-            # Each column is a different basis function and each row is a
-            # different timestep or point in the functional domain
-            Bx = basis_funcs(x)
 
             # If this produces a curve which is too spiky or rapidly-varying,
             # then a smoothing prior such as a Gaussian random walk could
@@ -228,13 +224,12 @@ def rwfmm(functional_data,static_data,Y,
             elif spline_coef_prior == 'random_walk':
                 if spline_rw_sd == 'prior':
                     spline_rw_sd = pm.HalfNormal('spline_rw_sd',sd = spline_rw_hyper_sd,shape = F)
-                spline_initial_coef = pm.Normal('spline_initial_coef',shape = F)
                 spline_jumps = pm.Normal('spline_jumps', shape = [n_spline_knots,F])
 
-                spline_coef = pm.Deterministic('spline_coef',tt.cumsum(spline_jumps * spline_rw_sd + spline_initial_coef,axis = 0))
+                spline_coef = pm.Deterministic('spline_coef',tt.cumsum(spline_jumps * spline_rw_sd ,axis = 0))
 
             # This inner product sums over the spline coefficients
-            func_coef = pm.Deterministic('func_coef', (tt.tensordot(Bx,spline_coef,axes=[[1],[0]])+ coef[C:]))
+            func_coef = pm.Deterministic('func_coef', (tt.tensordot(natural_basis,spline_coef,axes=[[1],[0]]) + coef[C:]))
 
 
         # This is deprecated - it is missing some priors.
@@ -246,16 +241,16 @@ def rwfmm(functional_data,static_data,Y,
             func_coefs = []
             for f in range(F):
                 func_coefs.append(utilities.bspline(spline_coef[:,f],spline_degree,n_spline_knots,x))
-            func_coef = pm.Deterministic('func_coef',(tt.stack(func_coefs,axis=1) + coef[C:]))
+            func_coef = pm.Deterministic('func_coef',(tt.stack(func_coefs,axis=1) ))
 
         else:
             raise ValueError('Functional coefficient type not recognized.""')
 
-            # This is the additive term in y_hat that comes from the functional
-            # part of the model.
-            func_contrib = tt.tensordot(functional_data,func_coef,axes=[[2,3],[0,1]])
-            if time_rescale_func:
-                func_contrib = func_contrib / T
+        # This is the additive term in y_hat that comes from the functional
+        # part of the model.
+        func_contrib = tt.tensordot(functional_data,func_coef,axes=[[2,3],[0,1]])
+        if time_rescale_func:
+            func_contrib = func_contrib / T
         # The part of y_hat that comes from the static covariates
         static_contrib = tt.tensordot(static_data,coef[0:C],axes = [2,0])
 
