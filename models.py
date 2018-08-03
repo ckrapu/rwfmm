@@ -17,7 +17,7 @@ def rwfmm(functional_data,static_data,Y,
         return_model_only = False, n_spline_knots = 10,
         func_coef_type = 'random_walk', spline_degree = 3,spline_coef_sd = 5.,
         spline_coef_prior = 'flat',spline_rw_sd = 5.,average_every_n = 1,
-        spline_rw_hyper_sd = 1.):
+        spline_rw_hyper_sd = 1.,poly_order=4):
     '''
     Fits a functional mixed model with a random-walk model of
     the functional coefficient. A range of different priors is available for
@@ -85,16 +85,20 @@ def rwfmm(functional_data,static_data,Y,
         If true, returns only the model object without sampling. This can be
         helpful for debugging.
     func_coef_type : string
-        One of 'constant','random_walk', 'bspline_recursive', or 'bspline_design'. This
-        determines how the functional coefficient will be parameterized. If it
+        One of 'constant','random_walk', 'bspline_recursive', 'natural_spline' or 'polynomial'.
+        This determines how the functional coefficient will be parameterized. If it
         is 'random_walk', then the coefficient will be computed as the cumulative
         sum of many small normally-distributed jumps whose standard deviation
         is controlled by 'func_coef_sd'. Alternatively, if one of the bspline
         options is used, then the functional coefficient will be a bspline. The option
         'bspline_recursive' builds the coefficient using the de Boor algorithm
-        while the 'bspline_design' option builds a design matrix using scipy's bspline
-        functionality and then estimates the coefficients linking that matrix to the
-        functional coefficients.
+        while the 'natural_spline' option builds a design matrix using patsy's
+        natural spline functionality and then estimates the coefficients
+        linking that matrix to the functional coefficients. Using 'polynomial'
+        specifies the functional coefficient as a polynomial of order 'poly_order'.
+    poly_order : int
+        The degree of the polynomial used if the functional coefficient type is
+        set to 'polynomial'.
     n_spline_knots : int
         In the event that the functional coefficient is one of the bspline choices,
         then this controls how many knots or breakpoints the spline has. In general,
@@ -209,10 +213,10 @@ def rwfmm(functional_data,static_data,Y,
                 random_walks = tt.cumsum(jumps,axis=0) * tt.exp(log_scale) + coef[C:]
                 func_coef = pm.Deterministic('func_coef',random_walks)
 
-        elif func_coef_type == 'bspline_design':
+        elif func_coef_type == 'natural_spline':
+
             x = np.arange(T)
             natural_basis = p.dmatrix("cr(x, df = {0}) - 1".format(n_spline_knots),{"x":x},return_type = 'dataframe').values
-
 
             # If this produces a curve which is too spiky or rapidly-varying,
             # then a smoothing prior such as a Gaussian random walk could
@@ -242,6 +246,14 @@ def rwfmm(functional_data,static_data,Y,
             for f in range(F):
                 func_coefs.append(utilities.bspline(spline_coef[:,f],spline_degree,n_spline_knots,x))
             func_coef = pm.Deterministic('func_coef',(tt.stack(func_coefs,axis=1) ))
+
+        elif func_coef_type == 'polynomial':
+            poly_basis = np.zeros([T,poly_order])
+            for i in range(1,poly_order+1):
+                poly_basis[:,i-1] = np.arange(T)**i
+
+            poly_coef = pm.Flat('poly_coef',shape = [poly_order,F])
+            func_coef = pm.Deterministic('func_coef',tt.tensordot(poly_basis,poly_coef,axes=[[1],[0]]) + coef[C:])
 
         else:
             raise ValueError('Functional coefficient type not recognized.""')
