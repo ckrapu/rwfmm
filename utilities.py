@@ -1,8 +1,11 @@
 import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
 import numpy as np
 import pandas as pd
 import theano
 import theano.tensor as tt
+
+
 
 theano.config.compute_test_value = 'ignore'
 
@@ -17,7 +20,8 @@ def ar1(beta,sd,length):
         vector[i+1] = vector[i] * beta + np.random.randn() * sd
     return vector
 
-def simulate_dataset(S,V,C,F,T,function_type,error_sd,error_type,autocorr=0.5,functional_covariate_type='normal'):
+def simulate_dataset(S,V,C,F,T,function_type,error_sd,error_type,autocorr=0.5,
+functional_covariate_type='normal',spike_variance = 0.25):
     '''Function for generating simulated data for a scalar-on-function
     regression with longitudinal measurements and scalar covariates.'
 
@@ -49,6 +53,8 @@ def simulate_dataset(S,V,C,F,T,function_type,error_sd,error_type,autocorr=0.5,fu
         One of 'normal' or 'autocorrelated'. The first sets the functional covariates to have a
         standard normal distribution. The second sets the functional covariates to be AR(1) with
         a regression coefficient of 0.5 and a jump standard deviation of 0.5.
+    spike_variance : float
+        Variance of the spike function; set this higher to induce a flatter function.
 
     Returns
     -------
@@ -91,7 +97,7 @@ def simulate_dataset(S,V,C,F,T,function_type,error_sd,error_type,autocorr=0.5,fu
         functional_coefficients = np.sin(timesteps)
     elif function_type == 'spike':
         timesteps = np.linspace(-2,2,T)[:,np.newaxis].repeat(F,axis=1)
-        functional_coefficients = np.exp(-(timesteps/0.05)**2)
+        functional_coefficients = np.exp(-(timesteps/spike_variance)**2)
     else:
         raise ValueError('Function type not recognized.')
 
@@ -130,9 +136,14 @@ def coef_plot(samples,upper = 97.5,lower = 2.5):
     plt.ylabel('B(t)')
     plt.grid('on')
 
-import matplotlib.patches as mpatches
-def multiple_coef_plot(samples_array,num_horizontal,num_vertical,titles,upper = 97.5,lower = 2.5,fig_kwargs = {'figsize':(8,6),'sharex':True},
-                     xlabel='Timestep',ylabel='B(t)',true_coef = None,colors = ['k'],trace_labels = [''],true_color='k'):
+
+def multiple_coef_plot(samples_array,num_horizontal,num_vertical,titles,upper_q = 97.5,lower_q = 2.5,
+                       fig_kwargs = {'figsize':(8,6),'sharex':True},
+                       xlabel='Timestep',ylabel='B(t)',true_coef = None,
+                       colors = ['k'],trace_labels = [''],true_color='k',
+                       shade_sig = False,sig_excludes = [0.],
+                       sig_alphas = [0.25],sig_intervals = [(97.5,2.5)],average_function = np.mean,
+                       xticks =[0,50,100,150,200,250,300]):
     if type(samples_array) != list:
         samples_array = [samples_array]
 
@@ -144,18 +155,26 @@ def multiple_coef_plot(samples_array,num_horizontal,num_vertical,titles,upper = 
     proxy_artists = []
     for j,samples in enumerate(samples_array):
         for i in range(F):
-            upper_percentile = np.percentile(samples[:,:,i],upper,axis=0)
-            lower_percentile = np.percentile(samples[:,:,i],lower,axis=0)
-            axes[i].plot(timesteps,np.median(samples[:,:,i],axis = 0),color=colors[j],label = 'Median',linewidth = 2)
-            axes[i].plot(timesteps,upper_percentile,color=colors[j],linewidth = 1)
-            axes[i].plot(timesteps,lower_percentile,color=colors[j],linewidth = 1)
-            axes[i].fill_between(timesteps,upper_percentile,lower_percentile,color=colors[j],alpha = 0.1)
-            axes[i].plot(timesteps,zeros,linewidth = 3, linestyle='--',alpha = 0.5,color='k')
+            axes[i].plot(timesteps,np.zeros(len(timesteps)),color=colors[j],linestyle='--')
+            average = average_function(samples[:,:,i],axis = 0)
+            axes[i].plot(timesteps,average,color=colors[j],linewidth = 2)
+            upper = np.percentile(samples[:,:,i],upper_q,axis=0)
+            lower = np.percentile(samples[:,:,i],lower_q,axis=0)
+            axes[i].plot(timesteps,upper,lower,color=colors[j],linewidth=1)
+            axes[i].xaxis.set_ticks(xticks)
+            if shade_sig:
+                for k,alpha in enumerate(sig_alphas):
+                    bounds = np.percentile(samples[:,:,i],[sig_intervals[k][0],sig_intervals[k][1]],axis=0)
+                    is_sig = np.logical_or((bounds[0] < sig_excludes),(bounds[1] > sig_excludes))
+                    axes[i].fill_between(timesteps,upper,lower,where=is_sig,color=colors[j],
+                                         alpha = alpha,zorder = k+1)
+
             if true_coef is not None:
                 axes[i].plot(timesteps,true_coef[i],linewidth = 3,alpha = 0.75,color=true_color)
 
             axes[i].set_title(titles[i])
         proxy_artists.append(mpatches.Patch(color=colors[j]))
+     
 
     if len(samples_array) > 1:
         plt.figlegend(proxy_artists,trace_labels,loc = 'upper center',ncol = len(samples_array),bbox_to_anchor = (.5,1.04))
@@ -169,7 +188,7 @@ def get_data(response_col,functional_covariates,static_covariates,log_transform_
             filename = '/home/ckrapu/Dropbox/wfmm/intermediate/no_wavelet_dataframe_5_6.p'):
     '''Function for loading data from a specific data file for use in functional
     linear mixed model.'''
-    df = pd.read_pickle(filename)
+    df = pd.read_csv(filename)
     P = df.id.unique().shape[0]
     V = df.visit.unique().shape[0]
     F = len(functional_covariates)
