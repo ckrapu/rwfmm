@@ -7,16 +7,31 @@ import patsy as p
 import utilities
 
 
+def cross_validate_rwfmm(rwfmm_args,rwfmm_kwargs,param_for_tuning,tuning_set,criterion='LOO'):
+    model_dict = {}
+    trace_list = []
+
+    for param_val in tuning_set:
+        modified_kwargs = rwfmm_kwargs.copy()
+        modified_kwargs[param_for_tuning] = param_val
+        trace,model = rwfmm(*rwfmm_args,**modified_kwargs)
+        model_dict[model] = trace
+
+    rankings = pm.stats.compare(model_dict,ic = criterion)
+    return rankings, model_dict
+
+
 
 def rwfmm(functional_data,static_data,Y,
-        func_coef_sd = 0.1, method='nuts',
-        robust=False, func_coef_sd_hypersd = 0.05,
+        func_coef_sd = 'prior', method='nuts',
+        robust=False, func_coef_sd_hypersd = 0.1,
         coefficient_prior='flat', include_random_effect = True,
         variable_func_scale = True, time_rescale_func = False,
         sampler_kwargs = {'init':'adapt_diag','chains':1,'tune':500,'draws':500},
-        return_model_only = False, n_spline_knots = 10,
-        func_coef_type = 'random_walk', spline_degree = 3,spline_coef_sd = 5.,
-        spline_coef_prior = 'flat',spline_rw_sd = 5.,average_every_n = 1,
+        return_model_only = False, n_spline_knots = 20,
+        func_coef_type = 'random_walk', spline_degree = 3,spline_coef_sd = 'prior',
+        spline_coef_hyper_sd = 2.,
+        spline_coef_prior = 'random_walk',spline_rw_sd = 1.,average_every_n = 1,
         spline_rw_hyper_sd = 1.,poly_order=4):
     '''
     Fits a functional mixed model with a random-walk model of
@@ -85,17 +100,20 @@ def rwfmm(functional_data,static_data,Y,
         If true, returns only the model object without sampling. This can be
         helpful for debugging.
     func_coef_type : string
-        One of 'constant','random_walk', 'bspline_recursive', 'natural_spline' or 'polynomial'.
+        One of 'constant','random_walk', 'bspline_recursive', 'natural_spline',
+        'linear','bspline_design' or 'polynomial'.
         This determines how the functional coefficient will be parameterized. If it
         is 'random_walk', then the coefficient will be computed as the cumulative
         sum of many small normally-distributed jumps whose standard deviation
         is controlled by 'func_coef_sd'. Alternatively, if one of the bspline
         options is used, then the functional coefficient will be a bspline. The option
         'bspline_recursive' builds the coefficient using the de Boor algorithm
-        while the 'natural_spline' option builds a design matrix using patsy's
-        natural spline functionality and then estimates the coefficients
+        while the options 'bspline_design' and 'natural_spline' build a design
+        matrix using patsy's functionality and then estimates the coefficients
         linking that matrix to the functional coefficients. Using 'polynomial'
         specifies the functional coefficient as a polynomial of order 'poly_order'.
+        'linear' makes the functional coefficient a linear function of the function
+        domain.
     poly_order : int
         The degree of the polynomial used if the functional coefficient type is
         set to 'polynomial'.
@@ -128,7 +146,7 @@ def rwfmm(functional_data,static_data,Y,
         the data unchanged.
 
     Returns
-    _______
+    -------
     trace: pymc3 Trace
         Samples produced either via MCMC or approximate inference during
         fitting.
@@ -203,7 +221,7 @@ def rwfmm(functional_data,static_data,Y,
                     func_coef_sd = pm.HalfNormal('func_coef_sd',sd = func_coef_sd_hypersd,shape=F)
 
                 # The 'jumps' are the small deviations about the mean of the functional
-                # coefficient, which is defined as 'level'.
+                # coefficient.
                 if variable_func_scale:
                     log_scale = pm.Normal('log_scale',shape = F)
                 else:
@@ -211,12 +229,19 @@ def rwfmm(functional_data,static_data,Y,
 
                 jumps        = pm.Normal('jumps',sd = func_coef_sd,shape=(T,F))
                 random_walks = tt.cumsum(jumps,axis=0) * tt.exp(log_scale) + coef[C:]
-                func_coef = pm.Deterministic('func_coef',random_walks)
+                func_coef    = pm.Deterministic('func_coef',random_walks)
 
-        elif func_coef_type == 'natural_spline':
+        elif (func_coef_type == 'natural_spline' or func_coef_type == 'bspline_design'):
 
             x = np.arange(T)
-            natural_basis = p.dmatrix("cr(x, df = {0}) - 1".format(n_spline_knots),{"x":x},return_type = 'dataframe').values
+
+            # The -1 in the design matrix creation is to make sure that there
+            # is no constant term which would be made superfluous by 'coef'
+            # which is added to the functional coefficient later.
+            if func_coef_type == 'natural_spline':
+                spline_basis = p.dmatrix("cr(x, df = {0}) - 1".format(n_spline_knots),{"x":x},return_type = 'dataframe').values
+            elif func_coef_type == 'bspline_design':
+                spline_basis  = p.dmatrix("bs(x, df = {0}) - 1".format(n_spline_knots),{"x":x},return_type = 'dataframe').values
 
             # If this produces a curve which is too spiky or rapidly-varying,
             # then a smoothing prior such as a Gaussian random walk could
@@ -233,8 +258,7 @@ def rwfmm(functional_data,static_data,Y,
                 spline_coef = pm.Deterministic('spline_coef',tt.cumsum(spline_jumps * spline_rw_sd ,axis = 0))
 
             # This inner product sums over the spline coefficients
-            func_coef = pm.Deterministic('func_coef', (tt.tensordot(natural_basis,spline_coef,axes=[[1],[0]]) + coef[C:]))
-
+            func_coef = pm.Deterministic('func_coef', (tt.tensordot(spline_basis,spline_coef,axes=[[1],[0]]) + coef[C:]))
 
         # This is deprecated - it is missing some priors.
         elif func_coef_type == 'bspline_recursive':
@@ -254,6 +278,14 @@ def rwfmm(functional_data,static_data,Y,
 
             poly_coef = pm.Flat('poly_coef',shape = [poly_order,F])
             func_coef = pm.Deterministic('func_coef',tt.tensordot(poly_basis,poly_coef,axes=[[1],[0]]) + coef[C:])
+
+        elif func_coef_type == 'linear':
+                linear_basis = np.zeros([T,F])
+                for i in range(F):
+                    linear_basis[:,i] = np.arange(T)
+
+                linear_coef = pm.Flat('linear_coef',[F])
+                func_coef = pm.Deterministic('func_coef',linear_basis * linear_coef + coef[C:])
 
         else:
             raise ValueError('Functional coefficient type not recognized.""')
